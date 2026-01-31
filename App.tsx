@@ -25,7 +25,7 @@ function App() {
         <main className="flex-grow container mx-auto px-4 py-8">
           <Routes>
             <Route path="/" element={<InscriptionForm addAthlete={addAthlete} />} />
-            <Route path="/lista-de-chamada" element={<AttendanceList athletes={athletes} />} />
+            <Route path="/lista-de-chamada" element={<AttendanceList athletes={athletes} setAthletes={setAthletes} />} />
             <Route path="/horarios" element={<Schedule schedules={schedules} setSchedules={setSchedules} />} />
           </Routes>
         </main>

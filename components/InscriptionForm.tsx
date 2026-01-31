@@ -72,6 +72,7 @@ const InscriptionForm: React.FC<InscriptionFormProps> = ({ addAthlete }) => {
       address: formData.athleteAddress,
       whatsapp: formData.athleteWhatsapp,
       guardian: guardian,
+      attendance: {},
     };
 
     addAthlete(newAthlete);

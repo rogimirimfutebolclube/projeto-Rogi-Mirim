@@ -29,6 +29,7 @@ export type Athlete = {
   address: string;
   whatsapp: string;
   guardian: Guardian;
+  attendance: { [date: string]: boolean };
 };
 
 export type ScheduleItem = {
