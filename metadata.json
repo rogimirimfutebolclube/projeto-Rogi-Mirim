@@ -1,0 +1,5 @@
+{
+  "name": "Projeto Rogi Mirim",
+  "description": "An application for registering athletes for the Rogi Mirim soccer school, managing attendance lists, and viewing training schedules.",
+  "requestFramePermissions": []
+}
