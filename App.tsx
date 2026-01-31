@@ -7,6 +7,7 @@ import Header from './components/Header';
 import InscriptionForm from './components/InscriptionForm';
 import AttendanceList from './components/AttendanceList';
 import Schedule from './components/Schedule';
+import AthleteDetails from './components/AthleteDetails';
 import Footer from './components/Footer';
 import { INITIAL_SCHEDULES } from './constants';
 
@@ -27,6 +28,7 @@ function App() {
             <Route path="/" element={<InscriptionForm addAthlete={addAthlete} />} />
             <Route path="/lista-de-chamada" element={<AttendanceList athletes={athletes} setAthletes={setAthletes} />} />
             <Route path="/horarios" element={<Schedule schedules={schedules} setSchedules={setSchedules} />} />
+            <Route path="/atletas" element={<AthleteDetails athletes={athletes} />} />
           </Routes>
         </main>
         <Footer />

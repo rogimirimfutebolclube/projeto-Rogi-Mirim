@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { NavLink } from 'react-router-dom';
 
 const RogiMirimLogo = () => (
-    <img src="https://i.ibb.co/6P6X13p/logo.png" alt="Projeto Rogi Mirim Logo" className="h-20 w-auto" />
+    <img src="https://i.ibb.co/jZ8qXzP/logo.png" alt="Projeto Rogi Mirim Logo" className="h-20 w-auto" />
 );
 
 const Header: React.FC = () => {
@@ -36,6 +36,9 @@ const Header: React.FC = () => {
                             </NavLink>
                             <NavLink to="/horarios" className={({ isActive }) => `${linkStyle} ${isActive ? activeLinkStyle : inactiveLinkStyle}`}>
                                 Horários
+                            </NavLink>
+                             <NavLink to="/atletas" className={({ isActive }) => `${linkStyle} ${isActive ? activeLinkStyle : inactiveLinkStyle}`}>
+                                Atletas
                             </NavLink>
                         </div>
                     </div>
@@ -74,6 +77,9 @@ const Header: React.FC = () => {
                         </NavLink>
                         <NavLink to="/horarios" onClick={() => setIsMenuOpen(false)} className={({ isActive }) => `${mobileLinkStyle} ${isActive ? activeMobileLinkStyle : inactiveMobileLinkStyle}`}>
                             Horários
+                        </NavLink>
+                        <NavLink to="/atletas" onClick={() => setIsMenuOpen(false)} className={({ isActive }) => `${mobileLinkStyle} ${isActive ? activeMobileLinkStyle : inactiveMobileLinkStyle}`}>
+                            Atletas
                         </NavLink>
                     </div>
                 </div>
