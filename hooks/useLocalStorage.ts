@@ -5,6 +5,13 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 const CLOUD_BUCKET = 'rogi_mirim_v1_storage_unique';
 const BASE_URL = `https://kvdb.io/A2V2mR2Y5f5T6X8f9A4b/${CLOUD_BUCKET}_`;
 
+const FETCH_OPTIONS = {
+  cache: 'no-cache' as RequestCache,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+};
+
 export function useLocalStorage<T>(key: string, initialValue: T): [T, React.Dispatch<React.SetStateAction<T>>, boolean] {
   const [isSyncing, setIsSyncing] = useState(true);
   const [value, setValueState] = useState<T>(() => {
@@ -17,23 +24,17 @@ export function useLocalStorage<T>(key: string, initialValue: T): [T, React.Disp
     }
   });
 
-  // Ref to prevent race conditions during write operations from the same client
   const isWriting = useRef(false);
 
   const syncWithCloud = useCallback(async () => {
-    // Don't sync if a write operation from this client is in progress
     if (isWriting.current) return;
 
-    if(!isSyncing) setIsSyncing(true);
+    setIsSyncing(true);
     try {
-      const response = await fetch(BASE_URL + key);
-      // If the key doesn't exist, it's likely the first time this app is run.
-      // We do nothing and wait for the first write to create it.
+      const response = await fetch(BASE_URL + key, { cache: 'no-cache' });
       if (response.status === 404) {
-        console.log(`Key ${key} not found in cloud. Awaiting first write.`);
-        return;
+        return; // Key doesn't exist yet, do nothing.
       }
-      
       if (response.ok) {
         const remoteData = await response.json();
         setValueState(remoteData);
@@ -46,72 +47,65 @@ export function useLocalStorage<T>(key: string, initialValue: T): [T, React.Disp
     } finally {
       setIsSyncing(false);
     }
-  }, [key, isSyncing]);
+  }, [key]);
 
-  // Initial sync and periodic sync to get updates from other clients
   useEffect(() => {
     syncWithCloud();
-    const intervalId = setInterval(syncWithCloud, 7000); // Poll for changes every 7 seconds
+    const intervalId = setInterval(syncWithCloud, 7000);
     return () => clearInterval(intervalId);
   }, [syncWithCloud]);
 
   const setValue: React.Dispatch<React.SetStateAction<T>> = useCallback(async (action) => {
-    // Prevent multiple writes from firing at once from this client
     if (isWriting.current) {
-        console.warn("Write operation already in progress, skipping.");
+        console.warn("Write operation already in progress. New action ignored.");
         return;
     }
     
     isWriting.current = true;
     setIsSyncing(true);
-    
-    // Perform an optimistic update for a snappy UI response
-    const locallyUpdatedValue = action instanceof Function ? action(value) : action;
-    setValueState(locallyUpdatedValue);
-    
+
     try {
-        // --- Atomic Read-Modify-Write Cycle ---
-        
-        // 1. READ the latest data from the cloud to avoid overwriting recent changes.
-        let serverData = initialValue;
+        // 1. READ the latest state from the cloud to avoid overwriting recent changes.
+        let currentStateOnServer = initialValue;
         try {
-            const response = await fetch(BASE_URL + key);
+            const response = await fetch(BASE_URL + key, { cache: 'no-cache' });
             if (response.ok) {
-                serverData = await response.json();
+                currentStateOnServer = await response.json();
+            } else if (response.status !== 404) {
+                 throw new Error(`Failed to read from cloud. Status: ${response.status}`);
             }
         } catch(e) {
-            console.warn("Could not read from cloud before writing. This might cause data loss if another client wrote data recently.");
-            // Fallback to the state before our optimistic update
-            serverData = value; 
+            console.error("Critical: Could not read from cloud before writing. Aborting write.", e);
+            await syncWithCloud(); 
+            return;
         }
-        
-        // 2. MODIFY the fresh server data with the intended local change.
-        const dataToPush = action instanceof Function ? action(serverData) : action;
 
-        // 3. WRITE the new, correctly merged data back to the cloud.
+        // 2. MODIFY: Apply the state change to the data we just fetched.
+        const newValue = action instanceof Function ? action(currentStateOnServer) : action;
+
+        // 3. WRITE the new state back to the cloud.
         const writeResponse = await fetch(BASE_URL + key, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(dataToPush),
+            ...FETCH_OPTIONS,
+            body: JSON.stringify(newValue),
         });
 
         if (!writeResponse.ok) {
             throw new Error(`Failed to save to cloud. Status: ${writeResponse.status}`);
         }
-        
-        // 4. Finalize local state with the data that was successfully pushed to the cloud.
-        setValueState(dataToPush);
-        window.localStorage.setItem(key, JSON.stringify(dataToPush));
 
+        // 4. COMMIT: Update local state only AFTER successful cloud write.
+        setValueState(newValue);
+        window.localStorage.setItem(key, JSON.stringify(newValue));
+        
     } catch (error) {
-        console.error(`Could not save ${key} to cloud. Re-syncing with server.`, error);
-        // On failure, force a sync to get the last known good state from the server.
+        console.error(`Failed to update value for key "${key}". Re-syncing with server.`, error);
         await syncWithCloud();
     } finally {
         isWriting.current = false;
         setIsSyncing(false);
     }
-  }, [key, initialValue, value, syncWithCloud]);
+  }, [key, initialValue, syncWithCloud]);
 
   return [value, setValue, isSyncing];
 }
