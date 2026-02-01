@@ -6,7 +6,7 @@ import Input from './Input';
 import Select from './Select';
 
 interface InscriptionFormProps {
-  addAthlete: (athlete: Athlete) => void;
+  addAthlete: (athlete: Athlete) => boolean;
 }
 
 const initialFormData = {
@@ -31,6 +31,7 @@ const InscriptionForm: React.FC<InscriptionFormProps> = ({ addAthlete }) => {
   const [formData, setFormData] = useState(initialFormData);
   const [category, setCategory] = useState<string | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [showError, setShowError] = useState(false);
 
   useEffect(() => {
     const determinedCategory = getCategoryByBirthDate(formData.birthDate);
@@ -75,10 +76,17 @@ const InscriptionForm: React.FC<InscriptionFormProps> = ({ addAthlete }) => {
       attendance: {},
     };
 
-    addAthlete(newAthlete);
-    setFormData(initialFormData);
-    setShowSuccess(true);
-    setTimeout(() => setShowSuccess(false), 3000);
+    const success = addAthlete(newAthlete);
+    if (success) {
+      setFormData(initialFormData);
+      setShowSuccess(true);
+      setShowError(false);
+      setTimeout(() => setShowSuccess(false), 3000);
+    } else {
+      setShowError(true);
+      setShowSuccess(false);
+      setTimeout(() => setShowError(false), 4000);
+    }
   };
 
   return (
@@ -89,6 +97,12 @@ const InscriptionForm: React.FC<InscriptionFormProps> = ({ addAthlete }) => {
       {showSuccess && (
         <div className="bg-green-500 text-white p-4 rounded-md mb-6 text-center">
           Atleta inscrito com sucesso!
+        </div>
+      )}
+      
+      {showError && (
+        <div className="bg-red-500 text-white p-4 rounded-md mb-6 text-center">
+          Este atleta já está inscrito. Verifique o nome completo e a data de nascimento.
         </div>
       )}
 

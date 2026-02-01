@@ -15,8 +15,20 @@ function App() {
   const [athletes, setAthletes, isAthletesSyncing] = useLocalStorage<Athlete[]>('athletes', []);
   const [schedules, setSchedules, isSchedulesSyncing] = useLocalStorage<ScheduleItem[]>('schedules', INITIAL_SCHEDULES);
 
-  const addAthlete = (athlete: Athlete) => {
+  const addAthlete = (athlete: Athlete): boolean => {
+    const isDuplicate = athletes.some(
+      existingAthlete =>
+        existingAthlete.fullName.trim().toLowerCase() === athlete.fullName.trim().toLowerCase() &&
+        existingAthlete.birthDate === athlete.birthDate
+    );
+
+    if (isDuplicate) {
+      console.warn("Attempted to add a duplicate athlete:", athlete.fullName);
+      return false; // Indicate failure
+    }
+    
     setAthletes(prev => [...prev, athlete]);
+    return true; // Indicate success
   };
 
   const isSyncing = isAthletesSyncing || isSchedulesSyncing;
