@@ -5,9 +5,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 const CLOUD_BUCKET = 'rogi_mirim_v1_storage_unique';
 const BASE_URL = `https://kvdb.io/A2V2mR2Y5f5T6X8f9A4b/${CLOUD_BUCKET}_`;
 
-// Added React import to solve "Cannot find namespace 'React'" errors on line 8 and 55
 export function useLocalStorage<T>(key: string, initialValue: T): [T, React.Dispatch<React.SetStateAction<T>>, boolean] {
-  const [isSyncing, setIsSyncing] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(true); // Start with syncing true
   const [storedValue, setStoredValue] = useState<T>(() => {
     try {
       const item = window.localStorage.getItem(key);
@@ -17,59 +16,88 @@ export function useLocalStorage<T>(key: string, initialValue: T): [T, React.Disp
     }
   });
 
-  // Função para buscar dados da nuvem
-  const fetchRemoteData = useCallback(async () => {
-    setIsSyncing(true);
+  const syncWithCloud = useCallback(async () => {
+    if (!isSyncing) setIsSyncing(true);
     try {
       const response = await fetch(BASE_URL + key);
       if (response.ok) {
-        const remoteValue = await response.json();
+        const remoteData = await response.json();
         
-        // Lógica de mesclagem para arrays (atletas)
-        if (Array.isArray(remoteValue) && Array.isArray(storedValue)) {
-          const merged = [...remoteValue];
-          (storedValue as any[]).forEach(localItem => {
-            if (!merged.find(m => m.id === localItem.id)) {
-              merged.push(localItem);
+        setStoredValue(currentLocalData => {
+            let finalData;
+            if (Array.isArray(remoteData) && Array.isArray(currentLocalData)) {
+              // Merge based on ID. Remote data overwrites local on conflict.
+              const localMap = new Map((currentLocalData as any[]).map(item => [item.id, item]));
+              const remoteMap = new Map((remoteData as any[]).map(item => [item.id, item]));
+              const mergedMap = new Map([...localMap, ...remoteMap]);
+              finalData = Array.from(mergedMap.values());
+            } else {
+              // For non-arrays, remote data wins.
+              finalData = remoteData;
             }
-          });
-          setStoredValue(merged as unknown as T);
-          window.localStorage.setItem(key, JSON.stringify(merged));
-        } else {
-          // Para objetos (como horários), o remoto tem precedência se for novo
-          setStoredValue(remoteValue);
-          window.localStorage.setItem(key, JSON.stringify(remoteValue));
-        }
+            window.localStorage.setItem(key, JSON.stringify(finalData));
+            return finalData as T;
+        });
       }
     } catch (error) {
-      console.warn("Erro ao sincronizar com a nuvem:", error);
+      console.warn(`Could not sync ${key} from cloud:`, error);
     } finally {
       setIsSyncing(false);
     }
   }, [key]);
 
-  // Sincroniza ao montar o componente
+  // Initial sync and periodic sync
   useEffect(() => {
-    fetchRemoteData();
-  }, [fetchRemoteData]);
+    syncWithCloud(); // Initial sync
+    const intervalId = setInterval(syncWithCloud, 10000); // Sync every 10 seconds
+    return () => clearInterval(intervalId);
+  }, [syncWithCloud]);
 
-  // Added React import to solve "Cannot find namespace 'React'" errors on line 8 and 55
   const setValue: React.Dispatch<React.SetStateAction<T>> = async (value) => {
-    try {
-      const valueToStore = value instanceof Function ? value(storedValue) : value;
-      
-      // Atualiza estado local e localStorage imediatamente
-      setStoredValue(valueToStore);
-      window.localStorage.setItem(key, JSON.stringify(valueToStore));
+    // Determine the next state value
+    const newLocalValue = value instanceof Function ? value(storedValue) : value;
+    
+    // Optimistic local update for UI responsiveness
+    setStoredValue(newLocalValue);
+    window.localStorage.setItem(key, JSON.stringify(newLocalValue));
 
-      // Envia para a nuvem em background
-      setIsSyncing(true);
+    // Perform a robust read-modify-write to the cloud
+    setIsSyncing(true);
+    try {
+      // 1. Read the latest state from the cloud
+      const response = await fetch(BASE_URL + key);
+      const remoteData = response.ok ? await response.json() : (Array.isArray(initialValue) ? [] : initialValue);
+
+      // 2. Merge local changes with the latest cloud state
+      let dataToPush;
+      if (Array.isArray(newLocalValue) && Array.isArray(remoteData)) {
+        const remoteMap = new Map((remoteData as any[]).map(item => [item.id, item]));
+        const localMap = new Map((newLocalValue as any[]).map(item => [item.id, item]));
+        
+        // Combine maps, with local changes taking precedence for items with the same ID
+        const mergedMap = new Map([...remoteMap, ...localMap]);
+        dataToPush = Array.from(mergedMap.values());
+      } else {
+        // For non-array data (like schedules), local change wins
+        dataToPush = newLocalValue;
+      }
+      
+      // 3. Write the fully merged data back to the cloud
       await fetch(BASE_URL + key, {
         method: 'POST',
-        body: JSON.stringify(valueToStore),
+        body: JSON.stringify(dataToPush),
       });
-    } catch (error) {
-      console.error("Erro ao salvar na nuvem:", error);
+
+      // 4. (Optional but good practice) Update local state with the final pushed data
+      // This ensures consistency if the merge logic produced a different result
+      setStoredValue(dataToPush as T);
+      window.localStorage.setItem(key, JSON.stringify(dataToPush));
+
+    } catch (error)
+     {
+      console.error(`Could not save ${key} to cloud:`, error);
+      // In case of error, re-sync to get the last good state
+      syncWithCloud();
     } finally {
       setIsSyncing(false);
     }
