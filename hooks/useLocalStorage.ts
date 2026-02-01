@@ -29,22 +29,15 @@ export function useLocalStorage<T>(key: string, initialValue: T): [T, React.Disp
     }
   });
 
-  const syncLock = useRef(false);
+  // A promise queue to ensure write operations are serialized and don't conflict.
+  const pushQueue = useRef(Promise.resolve());
 
-  // Fetches from the cloud and overwrites local state.
+  // Function to pull the latest data from the cloud.
   const pullFromCloud = useCallback(async () => {
-    if (syncLock.current) return; // Don't pull if a push is in progress.
-
     setIsSyncing(true);
     try {
       const response = await fetch(BASE_URL + key, { cache: 'no-cache' });
       if (response.status === 404) {
-        // If the key doesn't exist on the server, create it with the initial value.
-        await fetch(BASE_URL + key, {
-          method: 'POST',
-          ...FETCH_OPTIONS,
-          body: JSON.stringify(initialValue),
-        });
         setValueState(initialValue);
         window.localStorage.setItem(key, JSON.stringify(initialValue));
         return;
@@ -54,7 +47,7 @@ export function useLocalStorage<T>(key: string, initialValue: T): [T, React.Disp
         setValueState(remoteData);
         window.localStorage.setItem(key, JSON.stringify(remoteData));
       } else {
-        console.warn(`Failed to sync from cloud. Status: ${response.status}`);
+        console.warn(`Failed to pull from cloud for key "${key}". Status: ${response.status}`);
       }
     } catch (error) {
       console.warn(`Could not sync ${key} from cloud:`, error);
@@ -66,70 +59,77 @@ export function useLocalStorage<T>(key: string, initialValue: T): [T, React.Disp
   // Effect for initial load and periodic polling for updates from other devices.
   useEffect(() => {
     pullFromCloud();
-    const intervalId = setInterval(pullFromCloud, 5000); // Check for updates every 5 seconds
+    const intervalId = setInterval(pullFromCloud, 7000); // Check for updates every 7 seconds
     return () => clearInterval(intervalId);
   }, [pullFromCloud]);
 
 
-  // The main function to update state, performing an optimistic update and then syncing.
-  const setValue: React.Dispatch<React.SetStateAction<T>> = useCallback(async (action) => {
+  // The main function to update state.
+  const setValue: React.Dispatch<React.SetStateAction<T>> = useCallback((action) => {
     // 1. OPTIMISTIC UPDATE: Update local state immediately for a responsive UI.
-    const optimisticValue = action instanceof Function ? action(value) : action;
-    setValueState(optimisticValue);
-    window.localStorage.setItem(key, JSON.stringify(optimisticValue));
+    // We use the functional form of setState to get the most recent state value to apply the action to.
+    let optimisticValue: T;
+    setValueState(currentValue => {
+        optimisticValue = action instanceof Function ? action(currentValue) : action;
+        window.localStorage.setItem(key, JSON.stringify(optimisticValue));
+        return optimisticValue;
+    });
 
-    if (syncLock.current) {
-        console.warn("Sync already in progress. Your change is saved locally and will be synced shortly.");
-        return;
-    }
-    syncLock.current = true;
-    setIsSyncing(true);
-
-    try {
-        // 2. READ: Fetch the latest state from the server.
-        let serverState = initialValue;
+    // 2. QUEUE THE SYNC OPERATION: Chain the sync logic onto our promise queue.
+    // This ensures that if setValue is called multiple times quickly, each save
+    // happens sequentially, preventing race conditions.
+    pushQueue.current = pushQueue.current.then(async () => {
+        setIsSyncing(true);
         try {
+            // READ: Fetch the latest state from the server.
+            let serverState = initialValue;
             const response = await fetch(BASE_URL + key, { cache: 'no-cache' });
-            if (response.ok) serverState = await response.json();
-        } catch (e) {
-            console.error("Could not read from server before writing. Proceeding with local data, which may overwrite.", e);
+            if (response.ok) {
+                serverState = await response.json();
+            } else if (response.status !== 404) {
+                 console.warn(`Could not read server state for key "${key}". Status: ${response.status}`);
+            }
+
+            const localState = optimisticValue;
+            let dataToPush: T;
+            
+            // MERGE: Intelligently combine server data with local changes.
+            // This logic works for arrays of objects that have an 'id' property, like our athletes.
+            if (Array.isArray(serverState) && Array.isArray(localState)) {
+                // Create maps for efficient lookups. Filter for items with IDs to be safe.
+                const serverMap = new Map((serverState.filter(hasId)).map(item => [item.id, item]));
+                const localMap = new Map((localState.filter(hasId)).map(item => [item.id, item]));
+                // The merged map starts with all server data, then overwrites/adds local data.
+                // This correctly merges additions/updates from multiple clients.
+                const mergedMap = new Map([...serverMap, ...localMap]);
+                dataToPush = Array.from(mergedMap.values()) as T;
+            } else {
+                // For other data types (like schedules), the latest local change takes precedence.
+                dataToPush = localState;
+            }
+
+            // WRITE: Push the final, merged data back to the cloud.
+            const writeResponse = await fetch(BASE_URL + key, {
+                method: 'POST',
+                ...FETCH_OPTIONS,
+                body: JSON.stringify(dataToPush),
+            });
+
+            if (!writeResponse.ok) throw new Error(`Failed to save to cloud. Status: ${writeResponse.status}`);
+            
+            // RECONCILE: After a successful write, update local state with the merged data for consistency.
+            setValueState(dataToPush);
+            window.localStorage.setItem(key, JSON.stringify(dataToPush));
+
+        } catch (error) {
+            console.error(`Sync failed for key "${key}". Attempting to restore from server.`, error);
+            // If anything goes wrong, pull from the server to get back to a known good state.
+            await pullFromCloud();
+        } finally {
+            setIsSyncing(false);
         }
-
-        // 3. MERGE: Intelligently combine server data with local changes.
-        let dataToPush: T;
-        const localData = optimisticValue;
-
-        // If data is an array of items with IDs (like athletes), merge them.
-        if (Array.isArray(serverState) && Array.isArray(localData) && localData.length > 0 && hasId(localData[0])) {
-            const serverMap = new Map( (serverState as {id: string}[]).map(item => [item.id, item]) );
-            const localMap = new Map( (localData as {id: string}[]).map(item => [item.id, item]) );
-            const mergedMap = new Map([...serverMap, ...localMap]);
-            dataToPush = Array.from(mergedMap.values()) as T;
-        } else {
-            // For other data types (like schedules), the latest local change takes precedence.
-            dataToPush = localData;
-        }
-
-        // 4. WRITE: Push the final, merged data back to the cloud.
-        const writeResponse = await fetch(BASE_URL + key, {
-            method: 'POST',
-            ...FETCH_OPTIONS,
-            body: JSON.stringify(dataToPush),
-        });
-
-        if (!writeResponse.ok) throw new Error(`Failed to save to cloud. Status: ${writeResponse.status}`);
-
-        // 5. RECONCILE: After a successful write, update local state with the merged data for consistency.
-        setValueState(dataToPush);
-        window.localStorage.setItem(key, JSON.stringify(dataToPush));
-
-    } catch (error) {
-        console.error(`Synchronization failed for key "${key}". The app will try to sync again.`, error);
-    } finally {
-        syncLock.current = false;
-        setIsSyncing(false);
-    }
-  }, [key, initialValue, value, pullFromCloud]);
+    });
+  }, [key, initialValue, pullFromCloud]);
 
   return [value, setValue, isSyncing];
 }
