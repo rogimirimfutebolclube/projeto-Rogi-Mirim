@@ -12,17 +12,19 @@ import Footer from './components/Footer';
 import { INITIAL_SCHEDULES } from './constants';
 
 function App() {
-  const [athletes, setAthletes] = useLocalStorage<Athlete[]>('athletes', []);
-  const [schedules, setSchedules] = useLocalStorage<ScheduleItem[]>('schedules', INITIAL_SCHEDULES);
+  const [athletes, setAthletes, isAthletesSyncing] = useLocalStorage<Athlete[]>('athletes', []);
+  const [schedules, setSchedules, isSchedulesSyncing] = useLocalStorage<ScheduleItem[]>('schedules', INITIAL_SCHEDULES);
 
   const addAthlete = (athlete: Athlete) => {
-    setAthletes([...athletes, athlete]);
+    setAthletes(prev => [...prev, athlete]);
   };
+
+  const isSyncing = isAthletesSyncing || isSchedulesSyncing;
 
   return (
     <HashRouter>
       <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col font-sans">
-        <Header />
+        <Header isSyncing={isSyncing} />
         <main className="flex-grow container mx-auto px-4 py-8">
           <Routes>
             <Route path="/" element={<InscriptionForm addAthlete={addAthlete} />} />

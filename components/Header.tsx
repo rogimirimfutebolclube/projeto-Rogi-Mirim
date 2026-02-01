@@ -6,7 +6,11 @@ const RogiMirimLogo = () => (
     <img src="https://i.ibb.co/jZ8qXzP/logo.png" alt="Projeto Rogi Mirim Logo" className="h-20 w-auto" />
 );
 
-const Header: React.FC = () => {
+interface HeaderProps {
+    isSyncing?: boolean;
+}
+
+const Header: React.FC<HeaderProps> = ({ isSyncing }) => {
     const [isMenuOpen, setIsMenuOpen] = useState(false);
 
     const linkStyle = "px-4 py-2 rounded-md text-sm font-medium transition-colors";
@@ -23,16 +27,24 @@ const Header: React.FC = () => {
                 <div className="flex items-center justify-between h-24">
                     <div className="flex-shrink-0 flex items-center">
                        <RogiMirimLogo />
-                       <span className="text-2xl font-bold ml-4 text-yellow-400">Projeto Rogi Mirim</span>
+                       <div className="flex flex-col ml-4">
+                           <span className="text-xl sm:text-2xl font-bold text-yellow-400">Projeto Rogi Mirim</span>
+                           <div className="flex items-center mt-1">
+                               <div className={`h-2 w-2 rounded-full mr-2 ${isSyncing ? 'bg-yellow-500 animate-pulse' : 'bg-green-500'}`}></div>
+                               <span className="text-[10px] text-gray-400 uppercase tracking-widest font-bold">
+                                   {isSyncing ? 'Sincronizando Nuvem...' : 'Dados Sincronizados'}
+                               </span>
+                           </div>
+                       </div>
                     </div>
                     {/* Desktop Menu */}
-                    <div className="hidden md:block">
-                        <div className="ml-10 flex items-baseline space-x-4">
+                    <div className="hidden lg:block">
+                        <div className="ml-10 flex items-baseline space-x-2">
                             <NavLink to="/" className={({ isActive }) => `${linkStyle} ${isActive ? activeLinkStyle : inactiveLinkStyle}`}>
                                 Inscrição
                             </NavLink>
                             <NavLink to="/lista-de-chamada" className={({ isActive }) => `${linkStyle} ${isActive ? activeLinkStyle : inactiveLinkStyle}`}>
-                                Lista de Chamada
+                                Chamada
                             </NavLink>
                             <NavLink to="/horarios" className={({ isActive }) => `${linkStyle} ${isActive ? activeLinkStyle : inactiveLinkStyle}`}>
                                 Horários
@@ -43,7 +55,7 @@ const Header: React.FC = () => {
                         </div>
                     </div>
                     {/* Mobile Menu Button */}
-                    <div className="md:hidden">
+                    <div className="lg:hidden">
                         <button
                             onClick={() => setIsMenuOpen(!isMenuOpen)}
                             type="button"
@@ -67,13 +79,13 @@ const Header: React.FC = () => {
             </nav>
             {/* Mobile Menu */}
             {isMenuOpen && (
-                <div className="md:hidden" id="mobile-menu">
+                <div className="lg:hidden bg-gray-800 border-t border-gray-700" id="mobile-menu">
                     <div className="px-2 pt-2 pb-3 space-y-1 sm:px-3">
                          <NavLink to="/" onClick={() => setIsMenuOpen(false)} className={({ isActive }) => `${mobileLinkStyle} ${isActive ? activeMobileLinkStyle : inactiveMobileLinkStyle}`}>
                             Inscrição
                         </NavLink>
                         <NavLink to="/lista-de-chamada" onClick={() => setIsMenuOpen(false)} className={({ isActive }) => `${mobileLinkStyle} ${isActive ? activeMobileLinkStyle : inactiveMobileLinkStyle}`}>
-                            Lista de Chamada
+                            Chamada
                         </NavLink>
                         <NavLink to="/horarios" onClick={() => setIsMenuOpen(false)} className={({ isActive }) => `${mobileLinkStyle} ${isActive ? activeMobileLinkStyle : inactiveMobileLinkStyle}`}>
                             Horários
