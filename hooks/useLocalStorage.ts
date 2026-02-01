@@ -12,6 +12,11 @@ const FETCH_OPTIONS = {
   },
 };
 
+// Helper function to check if an object has an 'id' property
+function hasId(obj: any): obj is { id: string } {
+    return obj && typeof obj.id === 'string';
+}
+
 export function useLocalStorage<T>(key: string, initialValue: T): [T, React.Dispatch<React.SetStateAction<T>>, boolean] {
   const [isSyncing, setIsSyncing] = useState(true);
   const [value, setValueState] = useState<T>(() => {
@@ -24,16 +29,25 @@ export function useLocalStorage<T>(key: string, initialValue: T): [T, React.Disp
     }
   });
 
-  const isWriting = useRef(false);
+  const syncLock = useRef(false);
 
-  const syncWithCloud = useCallback(async () => {
-    if (isWriting.current) return;
+  // Fetches from the cloud and overwrites local state.
+  const pullFromCloud = useCallback(async () => {
+    if (syncLock.current) return; // Don't pull if a push is in progress.
 
     setIsSyncing(true);
     try {
       const response = await fetch(BASE_URL + key, { cache: 'no-cache' });
       if (response.status === 404) {
-        return; // Key doesn't exist yet, do nothing.
+        // If the key doesn't exist on the server, create it with the initial value.
+        await fetch(BASE_URL + key, {
+          method: 'POST',
+          ...FETCH_OPTIONS,
+          body: JSON.stringify(initialValue),
+        });
+        setValueState(initialValue);
+        window.localStorage.setItem(key, JSON.stringify(initialValue));
+        return;
       }
       if (response.ok) {
         const remoteData = await response.json();
@@ -47,65 +61,75 @@ export function useLocalStorage<T>(key: string, initialValue: T): [T, React.Disp
     } finally {
       setIsSyncing(false);
     }
-  }, [key]);
+  }, [key, initialValue]);
 
+  // Effect for initial load and periodic polling for updates from other devices.
   useEffect(() => {
-    syncWithCloud();
-    const intervalId = setInterval(syncWithCloud, 7000);
+    pullFromCloud();
+    const intervalId = setInterval(pullFromCloud, 5000); // Check for updates every 5 seconds
     return () => clearInterval(intervalId);
-  }, [syncWithCloud]);
+  }, [pullFromCloud]);
 
+
+  // The main function to update state, performing an optimistic update and then syncing.
   const setValue: React.Dispatch<React.SetStateAction<T>> = useCallback(async (action) => {
-    if (isWriting.current) {
-        console.warn("Write operation already in progress. New action ignored.");
+    // 1. OPTIMISTIC UPDATE: Update local state immediately for a responsive UI.
+    const optimisticValue = action instanceof Function ? action(value) : action;
+    setValueState(optimisticValue);
+    window.localStorage.setItem(key, JSON.stringify(optimisticValue));
+
+    if (syncLock.current) {
+        console.warn("Sync already in progress. Your change is saved locally and will be synced shortly.");
         return;
     }
-    
-    isWriting.current = true;
+    syncLock.current = true;
     setIsSyncing(true);
 
     try {
-        // 1. READ the latest state from the cloud to avoid overwriting recent changes.
-        let currentStateOnServer = initialValue;
+        // 2. READ: Fetch the latest state from the server.
+        let serverState = initialValue;
         try {
             const response = await fetch(BASE_URL + key, { cache: 'no-cache' });
-            if (response.ok) {
-                currentStateOnServer = await response.json();
-            } else if (response.status !== 404) {
-                 throw new Error(`Failed to read from cloud. Status: ${response.status}`);
-            }
-        } catch(e) {
-            console.error("Critical: Could not read from cloud before writing. Aborting write.", e);
-            await syncWithCloud(); 
-            return;
+            if (response.ok) serverState = await response.json();
+        } catch (e) {
+            console.error("Could not read from server before writing. Proceeding with local data, which may overwrite.", e);
         }
 
-        // 2. MODIFY: Apply the state change to the data we just fetched.
-        const newValue = action instanceof Function ? action(currentStateOnServer) : action;
+        // 3. MERGE: Intelligently combine server data with local changes.
+        let dataToPush: T;
+        const localData = optimisticValue;
 
-        // 3. WRITE the new state back to the cloud.
+        // If data is an array of items with IDs (like athletes), merge them.
+        if (Array.isArray(serverState) && Array.isArray(localData) && localData.length > 0 && hasId(localData[0])) {
+            const serverMap = new Map( (serverState as {id: string}[]).map(item => [item.id, item]) );
+            const localMap = new Map( (localData as {id: string}[]).map(item => [item.id, item]) );
+            const mergedMap = new Map([...serverMap, ...localMap]);
+            dataToPush = Array.from(mergedMap.values()) as T;
+        } else {
+            // For other data types (like schedules), the latest local change takes precedence.
+            dataToPush = localData;
+        }
+
+        // 4. WRITE: Push the final, merged data back to the cloud.
         const writeResponse = await fetch(BASE_URL + key, {
             method: 'POST',
             ...FETCH_OPTIONS,
-            body: JSON.stringify(newValue),
+            body: JSON.stringify(dataToPush),
         });
 
-        if (!writeResponse.ok) {
-            throw new Error(`Failed to save to cloud. Status: ${writeResponse.status}`);
-        }
+        if (!writeResponse.ok) throw new Error(`Failed to save to cloud. Status: ${writeResponse.status}`);
 
-        // 4. COMMIT: Update local state only AFTER successful cloud write.
-        setValueState(newValue);
-        window.localStorage.setItem(key, JSON.stringify(newValue));
-        
+        // 5. RECONCILE: After a successful write, update local state with the merged data for consistency.
+        setValueState(dataToPush);
+        window.localStorage.setItem(key, JSON.stringify(dataToPush));
+
     } catch (error) {
-        console.error(`Failed to update value for key "${key}". Re-syncing with server.`, error);
-        await syncWithCloud();
+        console.error(`Synchronization failed for key "${key}". The app will try to sync again.`, error);
     } finally {
-        isWriting.current = false;
+        syncLock.current = false;
         setIsSyncing(false);
     }
-  }, [key, initialValue, syncWithCloud]);
+  }, [key, initialValue, value, pullFromCloud]);
 
   return [value, setValue, isSyncing];
 }
